@@ -1,3 +1,14 @@
+# Paybox Transaction Service
+In this service, users will be able to send money transfer requests along with accepting and  denying these requests.
+
+This service handles the API requests from the app itself (as an improvement, the app requests should be centralized in an app service),
+saving the relevant data in MongoDB, and utilizing RabbitMQ in order to user the notifications service.
+
+### Endpoints:
+* POST /transfer - create a new transfer request
+* POST /reject-transfer - reject a transfer request
+* POST /accept-transfer - accept a transfer request
+
 ## How to start the server
 1. Clone the project and the docker compose project that contains all the relevant services: https://github.com/kshayk/pb-docker
 2. Run the docker compose project and follow its instructions in the readme file
