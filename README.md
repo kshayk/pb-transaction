@@ -1,7 +1,7 @@
 ## How to start the server
 1. Clone the project and the docker compose project that contains all the relevant services: [TBD]
 2. Run the docker compose project and follow its instructions in the readme file
-3. run `npm install` and `npm build`
+4. run `npm install`, `npm run build` and `npm run start` in that order
 
 Note: The server will run locally on the machine, but ideally, it should have its own Dockerfile which
 will connect to the same network as the mongo and rabbitmq containers.
