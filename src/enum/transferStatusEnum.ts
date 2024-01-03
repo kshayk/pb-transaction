@@ -1,0 +1,6 @@
+export enum TRANSFER_STATUS {
+    PENDING,
+    ACKNOWLEDGED,
+    REJECTED,
+    COMPLETED
+}
