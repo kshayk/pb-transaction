@@ -1,12 +1,13 @@
-import * as jwt from "jsonwebtoken";
-import {Response, Request} from "express";
-import {JwtUserDataType} from "../type/JwtUserDataType";
+import {Request, Response} from "express";
 import {
-    acceptTransferRequest, createTransactionHistory,
-    createTransferRequest, getTransferRequest,
+    acceptTransferRequest,
+    createTransactionHistory,
+    createTransferRequest,
+    getTransferRequest,
     getUserAvailableBalance,
     incrementMoneyTransferRetryCount,
-    rejectTransferRequest, sendTransferAcceptedNotificationMessage,
+    rejectTransferRequest,
+    sendTransferAcceptedNotificationMessage,
     sendTransferRequestNotificationMessage,
     updateAcceptanceReceiverBalance,
     updateAcceptanceSenderBalance,
@@ -14,7 +15,7 @@ import {
     updateUserAvailableBalance
 } from "../service/transferService";
 import mongoose from "mongoose";
-import {validateJwt} from "../auth/jwt";
+import {TRANSFER_STATUS} from "../enum/transferStatusEnum";
 
 async function generateErrorResponse(res: Response, message: string, error: any, statusCode: number, mongoSession: mongoose.ClientSession | null, withConsoleLog = false) {
     if (mongoSession) {
@@ -33,13 +34,6 @@ export async function requestTransfer(req: Request, res: Response) {
     const session = await mongoose.startSession();
     session.startTransaction();
 
-    let userData : JwtUserDataType;
-    try {
-        userData = await validateJwt(req.headers.authorization);
-    } catch (e) {
-        return await generateErrorResponse(res, 'Invalid token', e, 401, session);
-    }
-
     const requiredFields = ['receiverId', 'amount'];
     for (const field of requiredFields) {
         if (!req.body[field]) {
@@ -50,31 +44,36 @@ export async function requestTransfer(req: Request, res: Response) {
     const receiverId = req.body.receiverId;
     const amount = req.body.amount;
     const note = req.body.note ?? null;
+    const senderId = req.body.userId;
 
-    const userBalance = await getUserAvailableBalance(userData.userId);
-    if (userBalance < req.body.amount) {
+    if (senderId === receiverId) {
+        return await generateErrorResponse(res, 'Cannot transfer to self', null, 400, session);
+    }
+
+    const userAvailableBalance = await getUserAvailableBalance(senderId);
+    if (userAvailableBalance < req.body.amount) {
         return await generateErrorResponse(res, 'Insufficient balance', null, 400, session);
     }
 
     try {
-        await updateUserAvailableBalance(userData.userId, userBalance - amount);
+        await updateUserAvailableBalance(senderId, userAvailableBalance - amount);
     } catch (e) {
         return await generateErrorResponse(res, 'Error updating user balance', e, 500, session, true);
     }
 
     let transferRequestId: string
     try {
-        transferRequestId = await createTransferRequest(userData.userId, receiverId, amount, note);
+        transferRequestId = await createTransferRequest(senderId, receiverId, amount, note);
     } catch (e) {
-        updateUserAvailableBalance(userData.userId, userBalance + amount).catch(e => {
-            console.error(`Failed to add back the available funds for user ${userData.userId} after saving the transfer request has failed.`, e)
+        updateUserAvailableBalance(senderId, userAvailableBalance + amount).catch(e => {
+            console.error(`Failed to add back the available funds for user ${senderId} after saving the transfer request has failed.`, e)
         });
 
         return await generateErrorResponse(res, 'Error creating transfer request', e, 500, session, true);
     }
 
     try {
-        await sendTransferRequestNotificationMessage(transferRequestId, userData.userId, receiverId, amount, note);
+        await sendTransferRequestNotificationMessage(transferRequestId, senderId, receiverId, amount, note);
     } catch (e) {
         incrementMoneyTransferRetryCount(transferRequestId).catch(e => {
             console.error(`Failed to increment the retry count for transfer ${transferRequestId} after sending the transfer notification has failed.`, e)
@@ -92,18 +91,12 @@ export async function rejectTransfer(req: Request, res: Response) {
     const session = await mongoose.startSession();
     session.startTransaction();
 
-    let userData: JwtUserDataType;
-    try {
-        userData = await validateJwt(req.headers.authorization);
-    } catch (e) {
-        return await generateErrorResponse(res, 'Invalid token', e, 401, session);
-    }
-
     if (!req.body.transferRequestId) {
         return await generateErrorResponse(res, 'Missing required field transferRequestId', null, 400, session);
     }
 
     const transferRequestId = req.body.transferRequestId;
+    const receiverId = req.body.userId;
 
     const transferRequest = await getTransferRequest(transferRequestId);
 
@@ -111,7 +104,11 @@ export async function rejectTransfer(req: Request, res: Response) {
         return await generateErrorResponse(res, 'Transfer request not found', null, 404, session);
     }
 
-    if (transferRequest?.receiverId !== userData.userId) {
+    if (transferRequest.transferStatus === TRANSFER_STATUS.PENDING) {
+        return await generateErrorResponse(res, 'Transfer request already processed', null, 400, session);
+    }
+
+    if (transferRequest?.receiverId !== receiverId) {
         return await generateErrorResponse(res, 'Invalid token', null, 401, session);
     }
 
@@ -136,24 +133,12 @@ export async function acceptTransfer(req: Request, res: Response) {
     const session = await mongoose.startSession();
     session.startTransaction();
 
-    let userData : JwtUserDataType;
-    try {
-        userData = await validateJwt(req.headers.authorization);
-    } catch (e) {
-        return await generateErrorResponse(res, 'Invalid token', e, 401, session);
-    }
-
     if (!req.body.transferRequestId) {
         return await generateErrorResponse(res, 'Missing required field transferRequestId', null, 400, session);
     }
 
     const transferRequestId = req.body.transferRequestId;
-
-    try {
-        await acceptTransferRequest(transferRequestId);
-    } catch (e) {
-        return await generateErrorResponse(res, 'Error accepting transfer request', e, 500, session, true);
-    }
+    const receiverId = req.body.userId;
 
     const transferRequest = await getTransferRequest(transferRequestId);
 
@@ -161,7 +146,17 @@ export async function acceptTransfer(req: Request, res: Response) {
         return await generateErrorResponse(res, 'Transfer request not found', null, 404, session);
     }
 
-    if (transferRequest?.receiverId !== userData.userId) {
+    if (transferRequest.transferStatus !== TRANSFER_STATUS.PENDING) {
+        return await generateErrorResponse(res, 'Transfer request already processed', null, 400, session);
+    }
+
+    try {
+        await acceptTransferRequest(transferRequestId);
+    } catch (e) {
+        return await generateErrorResponse(res, 'Error accepting transfer request', e, 500, session, true);
+    }
+
+    if (transferRequest?.receiverId !== receiverId) {
         return await generateErrorResponse(res, 'Invalid token', null, 401, session);
     }
 

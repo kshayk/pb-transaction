@@ -1,6 +1,11 @@
 import mongoose from "mongoose";
 
-const UserModel = new mongoose.Schema(
+export interface IUser extends mongoose.Document {
+    balance: number,
+    availableBalance: number,
+}
+
+const UserModel = new mongoose.Schema<IUser>(
     {
         balance: Number,
         availableBalance: Number,
@@ -8,4 +13,4 @@ const UserModel = new mongoose.Schema(
     { timestamps: true },
 );
 
-export const User = mongoose.model("User", UserModel);
+export const User = mongoose.model<IUser>("User", UserModel);
